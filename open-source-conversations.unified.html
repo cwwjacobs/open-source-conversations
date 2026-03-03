@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<!--
+  Open Source Conversations v1.0.0 — Local parser and exporter for OpenAI and Anthropic conversation archives
+  https://www.ixcore.io
+  License: MIT
+  Support: support@ixcore.io | Questions: cwwjacobs@ixcore.io
+
+  Parses ChatGPT and Claude JSON exports. Exports to Markdown, Plain Text, HTML, JSON, CSV.
+  All parsing and export logic runs locally. No telemetry.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Open Source Conversations — Local Parser &amp; Exporter</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,500;9..40,700&family=JetBrains+Mono:wght@400;600&display=swap');
+  :root {
+    --bg: #090a0e; --s1: #0f1117; --s2: #171a24; --s3: #1e2230;
+    --border: #252938; --text: #e0ded9; --dim: #787982; --dim2: #4e5060;
+    --gold: #d4a853; --silver: #a8a8b3; --bronze: #b87333;
+    --green: #3dd68c; --blue: #4a9ee8; --red: #e8524a;
+    --openai: #10a37f; --claude: #d4783c;
+    --font: Inter, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); line-height: 1.6; min-height: 100vh; }
+  ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* Layout */
+  .app { max-width: 960px; margin: 0 auto; padding: 40px 24px; }
+  .header { text-align: center; margin-bottom: 36px; }
+  .logo { display: inline-flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .logo-mark { width: 28px; height: 28px; background: linear-gradient(135deg, var(--gold), var(--red)); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 800; color: #000; }
+  .logo-text { font-size: 18px; font-weight: 700; letter-spacing: -.02em; }
+  .logo-sub { font-size: 11px; color: var(--dim); }
+  .tagline { font-size: 13px; color: var(--dim); margin-top: 4px; }
+
+  /* Drop zone */
+  .drop-zone { border: 2px dashed var(--border); border-radius: 14px; padding: 44px 36px; text-align: center; cursor: pointer; transition: all .2s; margin-bottom: 28px; }
+  .drop-zone:hover, .drop-zone.over { border-color: var(--gold); background: rgba(212, 168, 83, .04); }
+  .drop-icon { font-size: 36px; margin-bottom: 10px; opacity: .4; }
+  .drop-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .drop-hint { font-size: 12px; color: var(--dim); }
+  .drop-hint b { color: var(--openai); } .drop-hint b.cl { color: var(--claude); }
+
+  /* Report card */
+  .report { display: none; animation: fadeIn .2s ease; }
+  .report.visible { display: block; }
+  .section { background: var(--s1); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+  .section-title { font-size: 13px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .section-title .icon { font-size: 16px; }
+
+  /* Stat grid */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .stat { background: var(--s2); border-radius: 8px; padding: 12px 14px; }
+  .stat-label { font-size: 9px; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 2px; }
+  .stat-value { font-size: 22px; font-weight: 700; }
+
+  /* Conversation list */
+  .conv-list { max-height: 400px; overflow-y: auto; }
+  .conv-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 6px; cursor: pointer; transition: background .1s; }
+  .conv-item:hover { background: var(--s3); }
+  .conv-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .conv-title { flex: 1; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .conv-meta { font-size: 10px; color: var(--dim); flex-shrink: 0; display: flex; gap: 6px; align-items: center; }
+  .pill { padding: 2px 7px; border-radius: 99px; font-size: 9px; font-weight: 700; letter-spacing: .03em; }
+  .code-badge { font-family: var(--mono); font-size: 8px; font-weight: 700; color: var(--blue); }
+
+  /* Export section */
+  .export-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 16px; }
+  .fmt-card { padding: 12px; border-radius: 8px; border: 1px solid var(--border); cursor: pointer; transition: all .12s; }
+  .fmt-card:hover { border-color: var(--gold); }
+  .fmt-card.active { border-color: rgba(212, 168, 83, .5); background: rgba(212, 168, 83, .06); }
+  .fmt-name { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+  .fmt-desc { font-size: 10px; color: var(--dim); }
+  .fmt-ext { font-size: 9px; color: var(--dim2); font-family: var(--mono); margin-top: 3px; }
+
+  /* Export button */
+  .export-btn { width: 100%; padding: 11px 0; border-radius: 7px; border: none; background: linear-gradient(135deg, var(--gold), #9e7d3e); color: #000; font-size: 13px; font-weight: 700; cursor: pointer; font-family: var(--font); }
+  .export-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* Footer */
+  .footer { text-align: center; padding: 28px 0 16px; font-size: 11px; color: var(--dim2); }
+  .footer a { color: var(--gold); text-decoration: none; } .footer a:hover { text-decoration: underline; }
+
+  /* Preview modal */
+  .preview-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 100; align-items: center; justify-content: center; }
+  .preview-overlay.visible { display: flex; }
+  .preview-box { background: var(--s1); border: 1px solid var(--border); border-radius: 12px; width: 90%; max-width: 700px; max-height: 80vh; display: flex; flex-direction: column; }
+  .preview-header { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .preview-title { font-size: 14px; font-weight: 700; }
+  .preview-close { background: none; border: none; color: var(--dim); font-size: 18px; cursor: pointer; padding: 4px 8px; }
+  .preview-body { flex: 1; overflow-y: auto; padding: 16px 18px; }
+  .msg { padding: 10px 12px; margin: 5px 0; border-radius: 8px; }
+  .msg.user { background: var(--s2); border: 1px solid var(--border); }
+  .msg.assistant { background: var(--s1); border: 1px solid var(--border); }
+  .msg-author { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 3px; }
+  .msg-author.user { color: var(--green); } .msg-author.assistant { color: var(--gold); }
+  .msg-content { font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .msg-content code { background: #1a1d2e; padding: 1px 4px; border-radius: 3px; font-family: var(--mono); font-size: .9em; }
+  .msg-content pre { background: #1a1d2e; border: 1px solid var(--border); border-radius: 5px; padding: 8px 10px; margin: 4px 0; overflow-x: auto; font-family: var(--mono); font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <div class="header">
+    <div class="logo">
+      <div class="logo-mark">OS</div>
+      <span class="logo-text">Open Source Conversations</span>
+    </div>
+    <div class="logo-sub">open-source-conversations</div>
+    <div class="tagline">Local parser and exporter for OpenAI and Anthropic conversation archives</div>
+  </div>
+
+  <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+    <div class="drop-icon">📂</div>
+    <div class="drop-title">Drop your chat export here</div>
+    <div class="drop-hint">
+      <b>OpenAI</b> (ChatGPT) and <b class="cl">Anthropic</b> (Claude) JSON exports<br>
+      <span style="color:var(--dim); font-size:11px">or click to browse</span>
+    </div>
+    <input type="file" id="fileInput" accept=".json" multiple hidden>
+  </div>
+
+  <div class="report" id="report">
+    <!-- Parse overview (neutral metrics only) -->
+    <div class="stats" id="statsGrid"></div>
+
+    <!-- Conversations -->
+    <div class="section">
+      <div class="section-title"><span class="icon">💬</span> Conversations <span style="font-weight:400; color:var(--dim); font-size:11px" id="convCount"></span></div>
+      <div class="conv-list" id="convList"></div>
+    </div>
+
+    <!-- Export -->
+    <div class="section">
+      <div class="section-title"><span class="icon">↓</span> Export</div>
+      <div class="export-grid" id="fmtGrid"></div>
+      <button class="export-btn" id="exportBtn" disabled>Select a format</button>
+    </div>
+  </div>
+
+  <div class="footer">
+    Open Source Conversations · <a href="https://www.ixcore.io">ixCore.io</a><br>
+    <a href="https://github.com/ixcore/osource_conversations">GitHub</a> · MIT License · <a href="mailto:cwwjacobs@ixcore.io">cwwjacobs@ixcore.io</a>
+  </div>
+</div>
+
+<!-- Preview modal -->
+<div class="preview-overlay" id="previewOverlay" onclick="if(event.target===this)closePreview()">
+  <div class="preview-box">
+    <div class="preview-header">
+      <div class="preview-title" id="previewTitle"></div>
+      <button class="preview-close" onclick="closePreview()">✕</button>
+    </div>
+    <div class="preview-body" id="previewBody"></div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  Open Source Conversations v1.0.0 — Local parser & exporter
+//  OpenAI (ChatGPT) + Anthropic (Claude) · https://www.ixcore.io
+// ═══════════════════════════════════════════════════════════════
+
+// ─── Parser (same engine as CLI) ─────────────────────────────
+
+function detectProvider(data) {
+  if (Array.isArray(data) && data.length && typeof data[0] === 'object' && data[0]) {
+    if (data[0].current_node && data[0].mapping) return 'openai';
+    if ((data[0].messages || data[0].chat_messages) && (data[0].uuid || data[0].name || data[0].created_at || data[0].updated_at)) return 'claude';
+  }
+  return null;
+}
+
+function safeTs(ts) {
+  if (!ts) return '';
+  try { return new Date(typeof ts === 'number' ? ts * 1000 : ts).toISOString(); } catch { return ''; }
+}
+
+function parseOpenAI(data) {
+  return data.map(conv => {
+    const msgs = [], mapping = conv.mapping || {};
+    let node = conv.current_node; const chain = [], visited = new Set();
+    while (node && !visited.has(node) && chain.length < 100000) { visited.add(node); chain.push(node); node = mapping[node]?.parent || null; }
+    chain.reverse();
+    for (const id of chain) {
+      const msg = mapping[id]?.message; if (!msg) continue;
+      if (msg.content?.content_type !== 'text') continue;
+      const parts = msg.content?.parts || [];
+      if (!parts.length || !parts.some(Boolean)) continue;
+      const role = msg.author?.role || 'unknown';
+      if (role === 'system' && !msg.metadata?.is_user_system_message) continue;
+      msgs.push({ author: role === 'assistant' ? 'ChatGPT' : role === 'user' ? 'User' : role, role, content: parts.filter(Boolean).join('\n'), timestamp: safeTs(msg.create_time) });
+    }
+    return { title: conv.title || 'Untitled', provider: 'openai', created_at: safeTs(conv.create_time), updated_at: safeTs(conv.update_time), messages: msgs };
+  });
+}
+
+function parseClaude(data) {
+  return data.map(conv => {
+    const rawMessages = conv.messages || conv.chat_messages || [];
+    const msgs = rawMessages.map(m => {
+      let c = m.text;
+      if (!c) c = m.content ?? '';
+      if (Array.isArray(c)) c = c.map(b => typeof b === 'string' ? b : b?.type === 'text' ? b.text || '' : '').filter(Boolean).join('\n');
+      else if (typeof c !== 'string') c = String(c);
+
+      let role = m.role;
+      if (!role) {
+        const sender = m.sender;
+        role = sender === 'assistant' ? 'assistant' : sender === 'human' ? 'user' : sender || 'unknown';
+      }
+
+      return {
+        author: role === 'assistant' ? 'Claude' : role === 'user' ? 'User' : role,
+        role: role || 'unknown',
+        content: c,
+        timestamp: m.created_at || ''
+      };
+    });
+
+    return {
+      title: conv.name || 'Untitled',
+      provider: 'claude',
+      created_at: conv.created_at || '',
+      updated_at: conv.updated_at || '',
+      messages: msgs
+    };
+  });
+}
+
+function parseExport(raw) {
+  const data = JSON.parse(raw);
+  const p = detectProvider(data);
+  if (p === 'openai') return parseOpenAI(data);
+  if (p === 'claude') return parseClaude(data);
+  throw new Error('Unrecognized format');
+}
+
+// ─── Helpers (display/export only) ────────────────────────────
+
+const CODE_RE = [
+  /```[\w]*\n/,
+  /\b(def |class |function |const |let |var |import |from |return |if \(|for \(|while \()/,
+  /[{};]\s*\n/,
+  /\b(print|console\.log|println|echo)\s*\(/,
+  /\b(def|fn|func|sub|proc)\s+\w+\s*\(/,
+  /(=>|->)\s*[{(]/,
+  /^\s*(pip install|npm install|apt install|brew install|cargo add)/m,
+  /^\s*(import \w|from \w+ import|require\(|using |#include)/m,
+];
+function hasCode(t) { let h = 0; for (const r of CODE_RE) { if (r.test(t)) h++; if (h >= 2) return true; } return false; }
+function convHasCode(c) { return c.messages.some(m => hasCode(m.content)); }
+function estTokens(t) { return Math.max(1, Math.ceil(t.length / 4)); }
+
+// ─── Export formats ──────────────────────────────────────────
+
+function toMarkdown(c) {
+  let s = `# ${c.title}\n\n**Provider**: ${c.provider}  \n**Messages**: ${c.messages.length}\n\n`;
+  c.messages.forEach((m, i) => { s += `## ${i + 1}. ${m.author}\n\n`; m.content.split('\n').forEach(l => s += `> ${l}\n`); s += '\n'; });
+  return s;
+}
+
+function toTxt(c) {
+  let s = `${'='.repeat(60)}\n${c.title}\nProvider: ${c.provider} | Messages: ${c.messages.length}\n${'='.repeat(60)}\n\n`;
+  c.messages.forEach(m => { s += `[${m.author}]\n${m.content}\n\n`; });
+  return s;
+}
+
+function toHTML(c) {
+  const e = t => t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  let s = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${e(c.title)}</title><style>body{font-family:sans-serif;max-width:800px;margin:0 auto;padding:20px;line-height:1.6}h1{color:#333}.msg{margin:16px 0;padding:12px;border-left:4px solid #007bff;background:#f9f9f9;border-radius:0 6px 6px 0}.msg.user{border-left-color:#28a745}.author{font-weight:700}.content{margin-top:8px;white-space:pre-wrap}pre{background:#282c34;color:#abb2bf;padding:10px;border-radius:4px;overflow-x:auto}</style></head><body><h1>${e(c.title)}</h1>`;
+  c.messages.forEach(m => { s += `<div class="msg ${m.role}"><span class="author">${e(m.author)}</span><div class="content">${e(m.content)}</div></div>`; });
+  return s + '</body></html>';
+}
+
+function toJSON(convs) {
+  return JSON.stringify(convs.map(c => ({ title: c.title, provider: c.provider, messages: c.messages.map(m => ({ author: m.author, role: m.role, content: m.content, timestamp: m.timestamp })) })), null, 2);
+}
+
+function toCSV(convs) {
+  const esc = s => `"${String(s).replace(/"/g,'""')}"`;
+  let rows = 'title,provider,msg_index,role,content\n';
+  convs.forEach(c => c.messages.forEach((m, i) => { rows += [esc(c.title), esc(c.provider), i + 1, esc(m.role), esc(m.content)].join(',') + '\n'; }));
+  return rows;
+}
+
+const EXPORT_FMTS = [
+  { id: 'markdown', name: 'Markdown', desc: 'Readable with headers', ext: '.md', perFile: true },
+  { id: 'txt', name: 'Plain Text', desc: 'Simple text format', ext: '.txt', perFile: true },
+  { id: 'html', name: 'HTML', desc: 'Styled web pages', ext: '.html', perFile: true },
+  { id: 'json', name: 'JSON', desc: 'Normalized structure', ext: '.json', perFile: false },
+  { id: 'csv', name: 'CSV', desc: 'Flat table for analysis', ext: '.csv', perFile: false },
+];
+
+// ─── App State ───────────────────────────────────────────────
+
+let convs = [], selectedFmt = null;
+
+function handleFiles(files) {
+  for (const f of files) {
+    if (!f.name.endsWith('.json')) continue;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const parsed = parseExport(e.target.result);
+        const existing = new Set(convs.map(c => c.title + c.created_at));
+        const fresh = parsed.filter(c => !existing.has(c.title + c.created_at));
+        convs.push(...fresh);
+        render();
+      } catch (err) { alert('Parse error: ' + err.message); }
+    };
+    reader.readAsText(f);
+  }
+}
+
+function render() {
+  const report = document.getElementById('report');
+  report.classList.add('visible');
+
+  const totalTokens = convs.reduce((s, c) => s + c.messages.reduce((sum, m) => sum + estTokens(m.content) + 4, 0), 0);
+  const codeConvs = convs.filter(c => convHasCode(c)).length;
+  const totalMsgs = convs.reduce((s, c) => s + c.messages.length, 0);
+  const avgMsgs = convs.length ? (totalMsgs / convs.length).toFixed(1) : '0';
+  const providers = [...new Set(convs.map(c => c.provider))];
+  const sourceLabel = providers.length ? providers.map(p => p === 'openai' ? 'OpenAI' : 'Anthropic').join(' · ') : '—';
+
+  // Parse overview (neutral metrics only; tokens estimated; code count is heuristic)
+  document.getElementById('statsGrid').innerHTML = [
+    { l: 'Conversations', v: convs.length, c: 'var(--blue)' },
+    { l: 'Messages', v: totalMsgs.toLocaleString(), c: 'var(--blue)' },
+    { l: 'Est. tokens', v: `${(totalTokens / 1000).toFixed(0)}k`, c: 'var(--blue)' },
+    { l: 'Avg msgs/conv', v: avgMsgs, c: 'var(--blue)' },
+    { l: 'With code (heuristic)', v: codeConvs, c: 'var(--blue)' },
+    { l: 'Sources', v: sourceLabel, c: 'var(--dim)' },
+  ].map(s => `<div class="stat"><div class="stat-label">${s.l}</div><div class="stat-value" style="color:${s.c}">${s.v}</div></div>`).join('');
+
+  // Conversation list (archival order: updated_at desc, then created_at desc, then title)
+  const sortKey = (c) => (c.updated_at || c.created_at || '') + '\0' + (c.title || '');
+  const sorted = convs.map((c, i) => [c, i]).sort((a, b) => sortKey(b[0]).localeCompare(sortKey(a[0])));
+  document.getElementById('convCount').textContent = `(${convs.length})`;
+  document.getElementById('convList').innerHTML = sorted.map(([c, i]) => {
+    const dotColor = c.provider === 'openai' ? 'var(--openai)' : 'var(--claude)';
+    const tok = c.messages.reduce((s, m) => s + estTokens(m.content) + 4, 0);
+    return `<div class="conv-item" onclick="openPreview(${i})"><div class="conv-dot" style="background:${dotColor}"></div><div class="conv-title">${esc(c.title)}</div><div class="conv-meta">${c.messages.length} msgs · ${(tok/1000).toFixed(1)}k est. tokens${convHasCode(c) ? ' <span class="code-badge">&lt;/&gt;</span>' : ''}</div></div>`;
+  }).join('');
+
+  // Export format cards (implemented formats only)
+  document.getElementById('fmtGrid').innerHTML =
+    EXPORT_FMTS.map(f => `<div class="fmt-card${selectedFmt === f.id ? ' active' : ''}" onclick="selectFmt('${f.id}')"><div class="fmt-name">${f.name}</div><div class="fmt-desc">${f.desc}</div><div class="fmt-ext">${f.ext}</div></div>`).join('');
+
+  updateExportBtn();
+}
+
+function esc(t) { return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+function selectFmt(id) {
+  selectedFmt = selectedFmt === id ? null : id;
+  render();
+}
+
+function updateExportBtn() {
+  const btn = document.getElementById('exportBtn');
+  if (!selectedFmt || !convs.length) { btn.disabled = true; btn.textContent = 'Select a format'; return; }
+  const fmt = EXPORT_FMTS.find(f => f.id === selectedFmt);
+  btn.disabled = false;
+  btn.textContent = `↓ Export ${convs.length} conversations as ${fmt.name}`;
+}
+
+function doExport() {
+  if (!selectedFmt || !convs.length) return;
+  const fmt = EXPORT_FMTS.find(f => f.id === selectedFmt);
+  if (!fmt) return;
+
+  if (fmt.perFile) {
+    let content = '';
+    if (fmt.id === 'markdown') content = convs.map(c => toMarkdown(c)).join('\n---\n\n');
+    else if (fmt.id === 'txt') content = convs.map(c => toTxt(c)).join('\n');
+    else if (fmt.id === 'html') content = convs.map(c => toHTML(c)).join('\n<!-- --- -->\n');
+    download(content, `open_source_conversations_export${fmt.ext}`);
+  } else {
+    if (fmt.id === 'json') download(toJSON(convs), 'open_source_conversations_export.json');
+    else if (fmt.id === 'csv') download(toCSV(convs), 'open_source_conversations_export.csv');
+  }
+}
+
+function download(content, filename) {
+  const blob = new Blob([content], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ─── Preview ─────────────────────────────────────────────────
+
+function openPreview(idx) {
+  const c = convs[idx];
+  document.getElementById('previewTitle').textContent = c.title;
+  document.getElementById('previewBody').innerHTML = c.messages.map(m => {
+    const cls = m.role === 'user' ? 'user' : 'assistant';
+    // Basic code block rendering
+    let content = esc(m.content);
+    content = content.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre>$2</pre>');
+    content = content.replace(/`([^`]+)`/g, '<code>$1</code>');
+    return `<div class="msg ${cls}"><div class="msg-author ${cls}">${esc(m.author)}</div><div class="msg-content">${content}</div></div>`;
+  }).join('');
+  document.getElementById('previewOverlay').classList.add('visible');
+}
+
+function closePreview() { document.getElementById('previewOverlay').classList.remove('visible'); }
+
+// ─── Event Wiring ────────────────────────────────────────────
+
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('over'); handleFiles(e.dataTransfer.files); });
+fileInput.addEventListener('change', e => { handleFiles(e.target.files); e.target.value = ''; });
+document.getElementById('exportBtn').addEventListener('click', doExport);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closePreview(); });
+</script>
+</body>
+</html>
